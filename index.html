@@ -38,7 +38,7 @@ h2{font-size:18px;margin:6px 0 12px}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,addDoc,doc,getDoc,updateDoc,deleteDoc,query,where,onSnapshot} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {initializeFirestore,persistentLocalCache,persistentMultipleTabManager,collection,addDoc,doc,getDoc,getDocs,updateDoc,deleteDoc,query,where,onSnapshot} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* Configuración del proyecto Firebase Planillas-Tecnicos */
 const firebaseConfig={
@@ -50,7 +50,7 @@ const firebaseConfig={
   appId:"1:877056517148:web:9fff9a1740603285d82bd9"
 };
 
-const LINEAS=['Negro','Blanco','Mousse','Maicena','Conos','Galletas','Moldeo','Chips','Duyvis','Packint','Expedición','Depósito','Orgánicos','Otro'];
+const LINEAS=['Negro','Blanco','Mousse','Maicena','Conos','Galletas','Moldeo','Chips','Duyvis','Packint','Expedición','Depósito','Orgánicos'];
 const TIPOS=['Productivo','Correctivo','Preventivo'];
 const ESTADOS=['Pendiente','En curso','Hecha'];
 const $=s=>document.querySelector(s);
@@ -90,7 +90,7 @@ function shell(){
     <textarea name="notas" rows="2" placeholder="Notas (opcional)"></textarea>
     <select name="estado">${ESTADOS.map(e=>`<option>${e}</option>`).join('')}</select>
     <button class="pri">Guardar tarea</button></form>`
-  :`<div class="card"><input type="date" id="fd" value="${filtro}"></div>`}
+  :`<div class="card"><div class="row"><div><small class="mu">Desde</small><input type="date" id="fd" value="${filtro}"></div><div><small class="mu">Hasta (para Excel)</small><input type="date" id="fh" value="${filtro}"></div></div><button class="pri" data-xls style="width:100%;margin-top:8px">Descargar Excel</button></div>`}
   <div id="lista"></div></main>`;
   suscribir();
 }
@@ -124,9 +124,27 @@ function lista(){
     g.map(x=>`<div class="card"><b>${esc(x.n||'Técnico')}</b>${x.es.sort((a,b)=>(a.ts||0)-(b.ts||0)).map(e=>item(e,false)).join('')}</div>`).join('');
 }
 
+async function exportar(){
+  const d=$('#fd').value,h=$('#fh').value||d;
+  if(!d){alert('Elegí la fecha "Desde".');return}
+  try{
+    const s=await getDocs(query(collection(db,'tareas'),where('fecha','>=',d),where('fecha','<=',h)));
+    const rows=s.docs.map(x=>x.data()).sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:(a.ts||0)-(b.ts||0));
+    if(!rows.length){alert('No hay tareas en ese período.');return}
+    const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+    const cab=['Fecha','Técnico','Línea','Equipo','Tipo','Tarea','Estado','Notas'];
+    const csv='\ufeff'+[cab,...rows.map(r=>[r.fecha,r.nombre,r.linea,r.equipo,r.tipo,r.tarea,r.estado,r.notas])].map(r=>r.map(q).join(';')).join('\r\n');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+    a.download='tareas_'+d+'_a_'+h+'.csv';
+    document.body.appendChild(a);a.click();a.remove();
+  }catch(e){alert('No se pudo generar el archivo.')}
+}
+
 document.addEventListener('click',async ev=>{
   const t=ev.target.closest('button');if(!t)return;
   if('out' in t.dataset){signOut(auth);return}
+  if('xls' in t.dataset){exportar();return}
   if(t.dataset.tab){tab=t.dataset.tab;shell();return}
   try{
     if(t.dataset.st){await updateDoc(doc(db,'tareas',t.dataset.st),{estado:ESTADOS[(ESTADOS.indexOf(t.dataset.cur)+1)%3]})}
