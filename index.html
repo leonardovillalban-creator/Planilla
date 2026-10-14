@@ -66,7 +66,9 @@ const app=initializeApp(firebaseConfig);
 const auth=getAuth(app);
 const db=initializeFirestore(app,{localCache:persistentLocalCache({tabManager:persistentMultipleTabManager()})});
 
-let me=null,tab='mi',filtro=hoy(),tareas=[],unsub=null;
+let me=null,tab='mi',filtro=hoy(),tareas=[],unsub=null,tecs=[],fil={tec:'',tipo:'',est:''};
+const pasa=e=>(!fil.tec||e.uid===fil.tec)&&(!fil.tipo||e.tipo===fil.tipo)&&(!fil.est||e.estado===fil.est);
+async function cargarTecs(){try{const q=await getDocs(collection(db,'usuarios'));tecs=q.docs.map(d=>({id:d.id,n:d.data().nombre||'Sin nombre'})).sort((a,b)=>a.n.localeCompare(b.n))}catch(e){tecs=[]}}
 const isSup=()=>me?.rol==='supervisor';
 
 function vistaLogin(msg=''){
@@ -90,7 +92,11 @@ function shell(){
     <textarea name="notas" rows="2" placeholder="Notas (opcional)"></textarea>
     <select name="estado">${ESTADOS.map(e=>`<option>${e}</option>`).join('')}</select>
     <button class="pri">Guardar tarea</button></form>`
-  :`<div class="card"><div class="row"><div><small class="mu">Desde</small><input type="date" id="fd" value="${filtro}"></div><div><small class="mu">Hasta (para Excel)</small><input type="date" id="fh" value="${filtro}"></div></div><button class="pri" data-xls style="width:100%;margin-top:8px">Descargar Excel</button></div>`}
+  :`<div class="card"><div class="row"><div><small class="mu">Desde</small><input type="date" id="fd" value="${filtro}"></div><div><small class="mu">Hasta (para Excel)</small><input type="date" id="fh" value="${filtro}"></div></div><button class="pri" data-xls style="width:100%;margin-top:8px">Descargar Excel</button></div>
+  <div class="card"><b>Filtros</b>
+  <select id="ft" style="width:100%;margin-top:8px"><option value="">Todos los técnicos</option>${tecs.map(t=>`<option value="${esc(t.id)}"${t.id==fil.tec?' selected':''}>${esc(t.n)}</option>`).join('')}</select>
+  <div class="row" style="margin-top:8px"><select id="fx"><option value="">Todos los tipos</option>${TIPOS.map(t=>`<option${t==fil.tipo?' selected':''}>${t}</option>`).join('')}</select>
+  <select id="fe"><option value="">Todos los estados</option>${ESTADOS.map(t=>`<option${t==fil.est?' selected':''}>${t}</option>`).join('')}</select></div></div>`}
   <div id="lista"></div></main>`;
   suscribir();
 }
@@ -115,12 +121,14 @@ function lista(){
     L.innerHTML=m.length?`<div class="card">${m.map(e=>item(e,true)).join('')}</div>`:'<p class="mu">Todavía no cargaste tareas.</p>';
     return;
   }
-  const por={};tareas.forEach(e=>{(por[e.uid]=por[e.uid]||{n:e.nombre,es:[]}).es.push(e)});
+  const vis=tareas.filter(pasa);
+  if(tareas.length&&!vis.length){L.innerHTML='<p class="mu">Ninguna tarea coincide con los filtros.</p>';return}
+  const por={};vis.forEach(e=>{(por[e.uid]=por[e.uid]||{n:e.nombre,es:[]}).es.push(e)});
   const g=Object.values(por);
   if(!g.length){L.innerHTML='<p class="mu">Sin tareas cargadas para esa fecha.</p>';return}
-  const ok=tareas.filter(e=>e.estado=='Hecha').length;
-  const tipos=TIPOS.map(t=>`${t}: ${tareas.filter(e=>e.tipo==t).length}`).join(' · ');
-  L.innerHTML=`<p class="mu">${tareas.length} tareas · ${ok} hechas · ${g.length} técnicos<br>${tipos}</p>`+
+  const ok=vis.filter(e=>e.estado=='Hecha').length;
+  const tipos=TIPOS.map(t=>`${t}: ${vis.filter(e=>e.tipo==t).length}`).join(' · ');
+  L.innerHTML=`<p class="mu">${vis.length} tareas · ${ok} hechas · ${g.length} técnicos<br>${tipos}</p>`+
     g.map(x=>`<div class="card"><b>${esc(x.n||'Técnico')}</b>${x.es.sort((a,b)=>(a.ts||0)-(b.ts||0)).map(e=>item(e,false)).join('')}</div>`).join('');
 }
 
@@ -129,8 +137,8 @@ async function exportar(){
   if(!d){alert('Elegí la fecha "Desde".');return}
   try{
     const s=await getDocs(query(collection(db,'tareas'),where('fecha','>=',d),where('fecha','<=',h)));
-    const rows=s.docs.map(x=>x.data()).sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:(a.ts||0)-(b.ts||0));
-    if(!rows.length){alert('No hay tareas en ese período.');return}
+    const rows=s.docs.map(x=>x.data()).filter(pasa).sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:(a.ts||0)-(b.ts||0));
+    if(!rows.length){alert('No hay tareas en ese período con los filtros elegidos.');return}
     const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
     const cab=['Fecha','Técnico','Línea','Equipo','Tipo','Tarea','Estado','Notas'];
     const csv='\ufeff'+[cab,...rows.map(r=>[r.fecha,r.nombre,r.linea,r.equipo,r.tipo,r.tarea,r.estado,r.notas])].map(r=>r.map(q).join(';')).join('\r\n');
@@ -167,7 +175,13 @@ document.addEventListener('submit',async ev=>{
     f.reset();f.fecha.value=hoy();
   }
 });
-document.addEventListener('change',ev=>{if(ev.target.id=='fd'&&ev.target.value){filtro=ev.target.value;suscribir()}});
+document.addEventListener('change',ev=>{
+  const i=ev.target.id;
+  if(i=='fd'&&ev.target.value){filtro=ev.target.value;suscribir()}
+  if(i=='ft'){fil.tec=ev.target.value;lista()}
+  if(i=='fx'){fil.tipo=ev.target.value;lista()}
+  if(i=='fe'){fil.est=ev.target.value;lista()}
+});
 
 onAuthStateChanged(auth,async u=>{
   unsub&&unsub();unsub=null;tareas=[];me=null;
@@ -175,7 +189,7 @@ onAuthStateChanged(auth,async u=>{
   try{
     const s=await getDoc(doc(db,'usuarios',u.uid));
     if(!s.exists()){await signOut(auth);return vistaLogin('Tu usuario todavía no está habilitado. Avisale a tu supervisor.')}
-    me={uid:u.uid,...s.data()};tab='mi';shell();
+    me={uid:u.uid,...s.data()};tab='mi';if(isSup())await cargarTecs();shell();
   }catch(e){await signOut(auth);vistaLogin('No se pudo cargar tu usuario. Revisá la conexión e intentá de nuevo.')}
 });
 </script>
